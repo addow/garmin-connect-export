@@ -3,10 +3,10 @@
 :exclamation: | This script [now requires Python 3.x](https://github.com/pe-st/garmin-connect-export/issues/64)
 ---|---
 
-:exclamation: | There is a [report of a deactivated user account that might by caused by using this script](https://github.com/pe-st/garmin-connect-export/issues/60). The exact reasons are not known, and my account has never been deactivated. But be aware that I can give no guarantee that Garmin tolerates requests made from this script. I believe though that this script is fair use (it doesn't do anything other than automating stuff that you do in the browser). But be careful if you plan to run the script as periodical task (with `cron` etc)
+:exclamation: | There is a [report of a deactivated user account that might by caused by using this script](https://github.com/pe-st/garmin-connect-export/issues/60). The exact reasons are not known, and my account has never been deactivated. But be aware that I can give no guarantee that Garmin tolerates requests made from this script. I believe though that this script is fair use (it doesn't do anything other than automating stuff that you do in the browser). But be careful if you plan to run the script as periodical task (with `cron` etc).<br /><br />If you are hammering the Garmin Connect endpoints, it is possible that you end up with a "429 Too Many Requests" error. It is just temporarily and you can retry after a certain duration.
 ---|---
 
-Download a copy of your Garmin Connect data, including stats and GPX tracks.
+Download a copy of your Garmin Connect data, including stats, GPX tracks and/or GPX courses.
 
 Note that Garmin introduced a while ago (around May 2018, for GDPR compatibility) a possibility to [download all of your Garmin Connect data](https://www.garmin.com/en-US/account/datamanagement/exportdata/) in one zip file. Depending on your needs this might be enough, but the script here offers additional features like getting GPX tracks instead of the original upload format or limiting the export to just a couple of activities.
 
@@ -33,11 +33,13 @@ For the [branches](https://git-scm.com/book/en/v2/Git-Branching-Basic-Branching-
 
 ## Description
 
-This script will backup your personal Garmin Connect data. All downloaded data will go into a directory called `YYYY-MM-DD_garmin_connect_export/` in the current working directory. Activity records and details will go into a CSV file called `activities.csv`. GPX files (or whatever format you specify) containing track data, activity title, and activity descriptions are saved as well, using the Activity ID.
+This script will backup your personal Garmin Connect data. All downloaded data will go into a directory called `YYYY-MM-DD_garmin_connect_export/` in the current working directory. Activity and course records and details will go into a CSV file called `activities.csv` or `courses.csv` respectively. GPX files (or whatever format you specify) containing track data, activity title, and activity descriptions are saved as well, using the Activity ID (or Course ID).
 
 If there is no GPS track data (e.g., due to an indoor treadmill workout), a data file is still saved. If the GPX format is used, activity title and description data are saved. If the original format is used, Garmin may not provide a file at all and an empty file will be created. For activities where a GPX file was uploaded, Garmin may not have a TCX file available for download, so an empty file will be created. Since GPX is the only format Garmin should have for every activity, it is the default and preferred download format.
 
 If you have many activities, you may find that this script crashes with an "Operation timed out" message. Just run the script again and it will pick up where it left off.
+
+By default the script will download your activities. If you also like to store a copy or backup of your courses, you can specify the `--what courses` argument instead. You have the possibility to export them in GPX or FIT format.
 
 ## Installation
 
@@ -50,11 +52,11 @@ If you have many activities, you may find that this script crashes with an "Oper
 You will need a little experience running things from the command line to use this script. That said, here are the usage details from the `--help` flag:
 
 ```
-usage: gcexport.py [-h] [--version] [-v] [--username USERNAME]
-                   [--password PASSWORD] [-c COUNT] [-e EXTERNAL] [-a ARGS]
-                   [-f {gpx,tcx,original,json}] [-d DIRECTORY] [-s SUBDIR]
+usage: gcexport.py [-h] [--version] [-v] [--username USERNAME] [--password PASSWORD]
+                   [--what {activities,courses}] [-c COUNT] [-e EXTERNAL] [-a ARGS]
+                   [-f {gpx,tcx,original,json,fit}] [-d DIRECTORY] [-s SUBDIR]
                    [-u] [-ot] [--desc [DESC]] [-t TEMPLATE] [-fp]
-                   [-sa START_ACTIVITY_NO] [-ex FILE]
+                   [-si START_INDEX_NO] [-ex FILE]
 
 Garmin Connect Exporter
 
@@ -64,28 +66,33 @@ optional arguments:
   -v, --verbosity       increase output and log verbosity, save more intermediate files
   --username USERNAME   your Garmin Connect username or email address (otherwise, you will be prompted)
   --password PASSWORD   your Garmin Connect password (otherwise, you will be prompted)
+  --what {activities,courses}
+                        what to export; can be 'activities' or 'courses' (default: 'activities')
   -c COUNT, --count COUNT
-                        number of recent activities to download, or 'all' (default: 1)
+                        number of recent activities or courses to download, or 'all' (default: 1)
   -e EXTERNAL, --external EXTERNAL
                         path to external program to pass CSV file too
   -a ARGS, --args ARGS  additional arguments to pass to external program
-  -f {gpx,tcx,original,json}, --format {gpx,tcx,original,json}
-                        export format; can be 'gpx', 'tcx', 'original' or 'json' (default: 'gpx')
+  -f {gpx,tcx,original,json,fit}, --format {gpx,tcx,original,json,fit}
+                        export format; 'gpx', 'tcx', 'original' or 'json' for activities;
+                        'gpx' or 'fit' for courses (default: 'gpx')
   -d DIRECTORY, --directory DIRECTORY
                         the directory to export to (default: './YYYY-MM-DD_garmin_connect_export')
   -s SUBDIR, --subdir SUBDIR
-                        the subdirectory for activity files (tcx, gpx etc.), supported placeholders are {YYYY} and {MM}
-                        (default: export directory)
+                        the subdirectory for activity or course files (fit, gpx, tcx, etc.), supported placeholders
+                        are {YYYY} and {MM} (default: export directory)
   -u, --unzip           if downloading ZIP files (format: 'original'), unzip the file and remove the ZIP file
-  -ot, --originaltime   will set downloaded (and possibly unzipped) file time to the activity start time
-  --desc [DESC]         append the activity's description to the file name of the download; limit size if number is given
+  -ot, --originaltime   will set downloaded (and possibly unzipped) file time to the activity start time or the
+                        course creation time
+  --desc [DESC]         append the activity's or course's description to the file name of the download; limit size
+                        if number is given
   -t TEMPLATE, --template TEMPLATE
                         template file with desired columns for CSV output
   -fp, --fileprefix     set the local time as activity file name prefix
-  -sa START_ACTIVITY_NO, --start_activity_no START_ACTIVITY_NO
-                        give index for first activity to import, i.e. skipping the newest activities
+  -si START_INDEX_NO, --start_index_no START_INDEX_NO
+                        give index for first activity or course to import, i.e. skipping the newest activities or courses
   -ex FILE, --exclude FILE
-                        Json file with Array of activity IDs to exclude from download.
+                        Json file with Array of activity or course IDs to exclude from download.
                         Format example: {"ids": ["6176888711"]}
 ```
 
@@ -131,12 +138,16 @@ This tool is not guaranteed to get all of your data, or even download it correct
 
 If you want to see all of the raw data that Garmin hands to this script, just choose the JSON export format (`-f json`); in this case only metadata is exported, no track data.
 
-The format of the CSV export file can be customized with template files (in Properties format, see the `--template` option); three examples are included:
+The format of the CSV export file can be customized with template files (in Properties format, see the `--template` option); three examples are included for activities:
 
 - `csv_header_default.properties` (the default) gives you my preferred selection of columns, mainly targeted at running and hiking
 - `csv_header_all.properties` gives you all available columns, handy as starting point for your own selection
 - `csv_header_moderation.properties` gives you the same output as **@moderation**'s fork, mainly targeted at cycling
 - `csv_header_kjkjava.properties` gives you an output similar as **@kjkjava**'s original script, mainly targeted at running
+
+The default format of the CSV export file for courses can be found in the following file:
+
+- `csv_header_courses.properties` (the default for courses) gives you a preferred selection of columns, mainly targeted at cycling
 
 You can easily create a template file for your needs, just copy one of the examples and change the appearing columns, their order and/or their title.
 
@@ -162,7 +173,6 @@ Forks and Branches section above).
 In 2021 this fork was [detached from the original repo](https://github.com/pe-st/garmin-connect-export/issues/53);
 in what concerns Github, the repo isn't a fork anymore, but a new "original".
 For the history of this fork see the [CHANGELOG](CHANGELOG.md)
-
 
 ## Contributions
 

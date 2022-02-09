@@ -156,7 +156,9 @@ URL_GC_EVT_PROPS = 'https://connect.garmin.com/modern/main/js/properties/event_t
 URL_GC_GPX_ACTIVITY = 'https://connect.garmin.com/modern/proxy/download-service/export/gpx/activity/'
 URL_GC_TCX_ACTIVITY = 'https://connect.garmin.com/modern/proxy/download-service/export/tcx/activity/'
 URL_GC_ORIGINAL_ACTIVITY = 'http://connect.garmin.com/proxy/download-service/files/activity/'
-
+URL_GC_OWNER_COURSES = 'https://connect.garmin.com/modern/proxy/web-gateway/course/owner/'
+URL_GC_GPX_COURSE = 'https://connect.garmin.com/modern/proxy/course-service/course/gpx/'
+URL_GC_FIT_COURSE = 'https://connect.garmin.com/modern/proxy/course-service/course/fit/'
 
 def resolve_path(directory, subdir, time):
     """
@@ -500,33 +502,35 @@ def parse_arguments(argv):
         help='your Garmin Connect username or email address (otherwise, you will be prompted)')
     parser.add_argument('--password',
         help='your Garmin Connect password (otherwise, you will be prompted)')
+    parser.add_argument('--what', choices=['activities', 'courses'], default='activities',
+        help="what to export; can be 'activities' or 'courses' (default: 'activities')")
     parser.add_argument('-c', '--count', default='1',
-        help='number of recent activities to download, or \'all\' (default: 1)')
+        help='number of recent activities or courses to download, or \'all\' (default: 1)')
     parser.add_argument('-e', '--external',
         help='path to external program to pass CSV file too')
     parser.add_argument('-a', '--args',
         help='additional arguments to pass to external program')
-    parser.add_argument('-f', '--format', choices=['gpx', 'tcx', 'original', 'json'], default='gpx',
-        help="export format; can be 'gpx', 'tcx', 'original' or 'json' (default: 'gpx')")
+    parser.add_argument('-f', '--format', choices=['gpx', 'tcx', 'original', 'json', 'fit'], default='gpx',
+        help="export format; 'gpx', 'tcx', 'original' or 'json' for activities; 'gpx' or 'fit' for courses (default: 'gpx')")
     parser.add_argument('-d', '--directory', default=activities_directory,
         help='the directory to export to (default: \'./YYYY-MM-DD_garmin_connect_export\')')
     parser.add_argument('-s', "--subdir",
-        help="the subdirectory for activity files (tcx, gpx etc.), supported placeholders are {YYYY} and {MM}"
+        help="the subdirectory for activity or course files (fit, gpx, tcx, etc.), supported placeholders are {YYYY} and {MM}"
                         " (default: export directory)" )
     parser.add_argument('-u', '--unzip', action='store_true',
         help='if downloading ZIP files (format: \'original\'), unzip the file and remove the ZIP file')
     parser.add_argument('-ot', '--originaltime', action='store_true',
-        help='will set downloaded (and possibly unzipped) file time to the activity start time')
+        help='will set downloaded (and possibly unzipped) file time to the activity start time or the course creation time')
     parser.add_argument('--desc', type=int, nargs='?', const=0, default=None,
-        help='append the activity\'s description to the file name of the download; limit size if number is given')
+        help='append the activity\'s or course\'s description to the file name of the download; limit size if number is given')
     parser.add_argument('-t', '--template', default=CSV_TEMPLATE,
         help='template file with desired columns for CSV output')
     parser.add_argument('-fp', '--fileprefix', action='count', default=0,
         help="set the local time as activity file name prefix")
-    parser.add_argument('-sa', '--start_activity_no', type=int, default=1,
-        help="give index for first activity to import, i.e. skipping the newest activities")
+    parser.add_argument('-si', '--start_index_no', type=int, default=1,
+        help="give index for first activity or course to import, i.e. skipping the newest activities or courses")
     parser.add_argument('-ex', '--exclude', metavar="FILE",
-        help="Json file with Array of activity IDs to exclude from download. "
+        help="Json file with Array of activity or course IDs to exclude from download. "
                         "Format example: {\"ids\": [\"6176888711\"]}")
 
     return parser.parse_args(argv[1:])
@@ -705,6 +709,45 @@ def csv_write_record(csv_filter, extract, actvty, details, activity_type_name, e
     csv_filter.write_row()
 
 
+def csv_write_course_record(csv_filter, course, activity_type_name):
+    """
+    Write out the given course data as a CSV record
+    """
+
+    type_id = 4 if absent_or_null('activityType', course) else course['activityType']['typeId']
+    parent_type_id = 4 if absent_or_null('activityType', course) else course['activityType']['parentTypeId']
+    if present(parent_type_id, PARENT_TYPE_ID):
+        parent_type_key = PARENT_TYPE_ID[parent_type_id]
+    else:
+        parent_type_key = None
+        logging.warning("Unknown parentType %s, please tell script author", str(parent_type_id))
+
+    # get some geo values from course if present, none otherwise
+    start_latitude = None if absent_or_null('startLatitude', course) else course['startLatitude']
+    start_longitude = None if absent_or_null('startLongitude', course) else course['startLongitude']
+
+    csv_filter.set_column('id', str(course['courseId']))
+    csv_filter.set_column('courseName', course['courseName'] if present('courseName', course) else None)
+    csv_filter.set_column('description', course['courseDescription'] if present('courseDescription', course) else None)
+    csv_filter.set_column('distanceRaw', "{0:.5f}".format(course['distanceInMeters'] / 1000) if present('distanceInMeters', course) else None)
+    csv_filter.set_column('elevationGain', str(round(course['elevationGainInMeters'])) if present('elevationGainInMeters', course) else None)
+    csv_filter.set_column('elevationLoss', str(round(course['elevationLossInMeters'])) if present('elevationLossInMeters', course) else None)
+    csv_filter.set_column('averageSpeedRaw', kmh_from_mps(course['speedInMetersPerSecond']) if present('speedInMetersPerSecond', course) else None)
+    csv_filter.set_column('goalTimeRaw', str(round(course['elapsedSeconds'], 3)) if present('elapsedSeconds', course) else None)
+    csv_filter.set_column('goalTime', hhmmss_from_seconds(round(course['elapsedSeconds'])) if present('elapsedSeconds', course) else None)
+    csv_filter.set_column('activityTypeKey', course['activityType']['typeKey'] if present('typeKey', course['activityType']) else None)
+    csv_filter.set_column('activityType', value_if_found_else_key(activity_type_name, 'activity_type_' + course['activityType']['typeKey']) if present('activityType', course) else None)
+    csv_filter.set_column('activityParent', value_if_found_else_key(activity_type_name, 'activity_type_' + parent_type_key) if parent_type_key else None)
+    csv_filter.set_column('startLatitudeRaw', str(start_latitude) if start_latitude else None)
+    csv_filter.set_column('startLatitude', trunc6(start_latitude) if start_latitude else None)
+    csv_filter.set_column('startLongitudeRaw', str(start_longitude) if start_longitude else None)
+    csv_filter.set_column('startLongitude', trunc6(start_longitude) if start_longitude else None)
+    csv_filter.set_column('privacy', course['privacyRule']['typeKey'] if present('typeKey', course['privacyRule']) else None)
+    csv_filter.set_column('url', 'https://connect.garmin.com/modern/course/' + str(course['courseId']))
+
+    csv_filter.write_row()
+
+
 def extract_device(device_dict, details, start_time_seconds, args, http_caller, file_writer):
     """
     Try to get the device details (and cache them, as they're used for multiple activities)
@@ -850,7 +893,7 @@ def export_data_file(activity_id, activity_details, args, file_time, append_desc
         data_filename = os.path.join(directory, prefix + 'activity_' + activity_id + append_desc + '.json')
         file_mode = 'w'
     else:
-        raise Exception('Unrecognized format.')
+        raise Exception('Unrecognized format. Valid formats: \'gpx\', \'tcx\', \'original\' or \'json\'.')
 
     if os.path.isfile(data_filename):
         logging.debug('Data file for %s already exists', activity_id)
@@ -929,6 +972,76 @@ def export_data_file(activity_id, activity_details, args, file_time, append_desc
     # Inform the main program that the file is new
     return True
 
+
+def export_course_file(course_id, course, args, append_desc, file_time):
+    """
+    Write the data of the course to a file, depending on the chosen data format
+
+    The default filename is 'course_' + course_id, but this can be modified
+    by the '--fileprefix' option and the 'append_desc' parameter; the directory
+    to write the file into can be modified by the '--subdir' option.
+
+    :param course_id:        ID of the course (as string)
+    :param course:           details of the course (for format 'json')
+    :param args:             command-line arguments
+    :param append_desc:      suffix to the default filename
+    :param file_time:        if given the desired time stamp for the course file (in seconds since 1970-01-01)
+    :return:                 True if the file was written, False if the file existed already
+    """
+
+    # Datetime in ISO format used for '--fileprefix' and '--subdir' options
+    date_time = datetime.fromtimestamp(file_time).strftime('%Y-%m-%d %H:%M:%S')
+
+    # Time dependent subdirectory for course files, e.g. '{YYYY}'
+    if not args.subdir is None:
+        directory = resolve_path(args.directory, args.subdir, date_time)
+    # export courses to root directory
+    else:
+        directory = args.directory
+
+    if not os.path.isdir(directory):
+        os.makedirs(directory)
+
+    # timestamp as prefix for filename
+    if args.fileprefix > 0:
+        prefix = "{}-".format(date_time.replace("-", "").replace(":", "").replace(" ", "-"))
+    else:
+        prefix = ""
+
+    original_basename = None
+    if args.format == 'gpx':
+        data_filename = os.path.join(directory, prefix + 'course_' + course_id + append_desc + '.gpx')
+        download_url = URL_GC_GPX_COURSE + course_id + '?full=true'
+        file_mode = 'w'
+    elif args.format == 'fit':
+        data_filename = os.path.join(directory, prefix + 'course_' + course_id + append_desc + '.fit')
+        download_url = URL_GC_FIT_COURSE + course_id + '/0?elevation=true'
+        file_mode = 'wb'
+    else:
+        raise Exception('Unrecognized format. Valid formats: \'gpx\' or \'fit\'.')
+
+    if os.path.isfile(data_filename):
+        logging.debug('Course file for %s already exists', course_id)
+        print('\tCourse file already exists; skipping...')
+        # Inform the main program that the course file already exists
+        return False
+
+    # Download the data file from Garmin Connect. If the download fails (e.g., due to timeout),
+    # this script will die, but nothing will have been written to disk about this course, so
+    # just running it again should pick up where it left off.
+    try:
+        data = http_req(download_url)
+    except HTTPError as ex:
+        logging.info('Got %s for %s', ex.code, download_url)
+        raise Exception('Download failed. Got an HTTP error ' + str(ex.code) + ' for ' + download_url)
+
+    # Persist file
+    write_to_file(data_filename, data, file_mode, file_time)
+
+    # Inform the main program that the file is new
+    return True
+
+
 def setup_logging():
     """Setup logging"""
     logging.basicConfig(
@@ -984,6 +1097,25 @@ def fetch_userstats(args):
 
     # Persist JSON
     write_to_file(os.path.join(args.directory, 'userstats.json'), result, 'w')
+
+    return json.loads(result)
+
+
+def fetch_owner_courses(args):
+    """
+    Http request for getting owner's courses, more specifically total number of courses.
+    The json will be saved as file 'owner_courses.json'
+    :param args:    command-line arguments (for args.directory etc)
+    :return:        json with owner courses
+    """
+    print('Fetching courses...', end='')
+    logging.info('Courses URL: %s', URL_GC_OWNER_COURSES)
+    result = http_req_as_string(URL_GC_OWNER_COURSES)
+    print(' Done.')
+
+    # Persist JSON
+    if args.verbosity > 0:
+        write_to_file(os.path.join(args.directory, 'owner_courses.json'), result, 'w')
 
     return json.loads(result)
 
@@ -1077,6 +1209,84 @@ def fetch_activity_chunk(args, num_to_download, total_downloaded):
     activity_summaries = json.loads(result)
     fetch_multisports(activity_summaries, http_req_as_string, args)
     return activity_summaries
+
+
+def fetch_course_list(args, total_to_download):
+    """
+    Fetch the first 'total_to_download' course summaries; as a side effect save them in json format.
+    :param args:              command-line arguments (for args.directory etc)
+    :param total_to_download: number of courses to download
+    :return:                  List of course summaries
+    """
+
+    # This while loop will download data from the server in multiple chunks, if necessary.
+    courses = []
+
+    total_downloaded = 0
+    while total_downloaded < total_to_download:
+        # Maximum chunk size 'LIMIT_MAXIMUM' ... 400 return status if over maximum.  So download
+        # maximum or whatever remains if less than maximum.
+        # As of 2018-03-06 I get return status 500 if over maximum
+        if total_to_download - total_downloaded > LIMIT_MAXIMUM:
+            num_to_download = LIMIT_MAXIMUM
+        else:
+            num_to_download = total_to_download - total_downloaded
+
+        chunk = fetch_course_chunk(args, num_to_download, total_downloaded)
+        courses.extend(chunk)
+        total_downloaded += num_to_download
+
+    # Reverse complete course list (most recent courses first)
+    courses.reverse()
+
+    if len(courses) != total_to_download:
+        logging.info('Expected %s courses, got %s.', total_to_download, len(courses))
+
+    return courses[ : total_to_download]
+
+
+def annotate_course_list(courses, start, exclude_list):
+    action_list = []
+    for index, c in enumerate(courses):
+        if index < (start - 1):
+            action = 's'
+        elif str(c['courseId']) in exclude_list:
+            action = 'e'
+        else:
+            action = 'd'
+
+        action_list.append(dict(index=index, action=action, course=c))
+
+    return action_list
+
+
+def fetch_course_chunk(args, num_to_download, total_downloaded):
+    """
+    Fetch a chunk of course summaries; as a side effect save them in json format.
+    :param args:              command-line arguments (for args.directory etc)
+    :param num_to_download:   number of summaries to download in this chunk
+    :param total_downloaded:  number of already downloaded summaries in previous chunks
+    :return:                  List of activity summaries
+    """
+
+    search_params = {'start': total_downloaded, 'limit': num_to_download}
+    # Query Garmin Connect
+    print('Querying list of course ', total_downloaded + 1,
+          '..', total_downloaded + num_to_download,
+          '...', sep='', end='')
+    logging.info('Course list URL %s', URL_GC_OWNER_COURSES + '?' + urlencode(search_params))
+    result = http_req_as_string(URL_GC_OWNER_COURSES + '?' + urlencode(search_params))
+    print(' Done.')
+
+    # Persist JSON activities list
+    current_index = total_downloaded + 1
+    courses_list_filename = 'courses-' \
+                               + str(current_index) + '-' \
+                               + str(total_downloaded + num_to_download) + '.json'
+    owner_courses = json.loads(result)
+    courses = owner_courses['coursesForUser']
+    write_to_file(os.path.join(args.directory, courses_list_filename), json.dumps(courses), 'w')
+    return courses
 
 
 def fetch_multisports(activity_summaries, http_caller, args):
@@ -1197,8 +1407,11 @@ def main(argv):
 
     login_to_garmin_connect(args)
 
-    csv_filename = args.directory + '/activities.csv'
+    csv_filename = os.path.join(args.directory, args.what + '.csv')
     csv_existed = os.path.isfile(csv_filename)
+
+    if args.what == 'courses' and args.template == CSV_TEMPLATE:
+        args.template = args.template.replace("default", "courses")
 
     if python3:
         csv_file = open(csv_filename, mode='a', encoding='utf-8')
@@ -1210,124 +1423,199 @@ def main(argv):
     if not csv_existed:
         csv_filter.write_header()
 
-    # Query the userstats (activities totals on the profile page). Needed for
-    # filtering and for downloading 'all' to know how many activities are available
-    userstats_json = fetch_userstats(args)
+    # Process cources
+    if args.what == 'courses':
 
-    if args.count == 'all':
-        total_to_download = int(userstats_json['userMetrics'][0]['totalActivities'])
+        # Query the owner's courses (count courses). Needed for filtering
+        # and for downloading 'all' to know how many courses are available
+        owner_courses_json = fetch_owner_courses(args)
+
+        if args.count == 'all':
+            total_to_download = int(len(owner_courses_json['coursesForUser']))
+            if args.verbosity > 0:
+                print('Total number of owner\'s courses:', total_to_download)
+        else:
+            total_to_download = int(args.count)
+
+        # load some dictionaries with lookup data from REST services
+        activity_type_props = http_req_as_string(URL_GC_ACT_PROPS)
+        if args.verbosity > 0:
+            write_to_file(os.path.join(args.directory, 'activity_types.properties'), activity_type_props, 'w')
+        activity_type_name = load_properties(activity_type_props)
+
+        courses = fetch_course_list(args, total_to_download)
+        action_list = annotate_course_list(courses, args.start_index_no, exclude_list)
+
+        # Process each course.
+        for item in action_list:
+
+            current_index = item['index'] + 1
+            course = item['course']
+            action = item['action']
+
+            # Action: skipping
+            if action == 's':
+                # Display which entry we're skipping.
+                print('Skipping   : Garmin Connect course ', end='')
+                print('(', current_index, '/', len(action_list), ') ', sep='', end='')
+                print('[', course['courseId'], ']', sep='')
+                continue
+
+            # Action: excluding
+            if action == 'e':
+                # Display which entry we're skipping.
+                print('Excluding  : Garmin Connect course ', end='')
+                print('(', current_index, '/', len(action_list), ') ', sep='', end='')
+                print('[', course['courseId'], '] ', sep='')
+                continue
+
+            # Action: download
+            # Display which entry we're working on.
+            print('Downloading: Garmin Connect course ', end='')
+            print('(', current_index, '/', len(action_list), ') ', sep='', end='')
+            print('[', course['courseId'], '] ', sep='', end='')
+            print(course['courseName'], ': ', sep='', end='')
+
+            if 'distanceInMeters' in course and isinstance(course['distanceInMeters'], (float)):
+                print("{0:.1f}".format(course['distanceInMeters'] / 1000), ' km', sep='')
+            else:
+                print('0.0 km')
+
+            if args.desc is not None:
+                append_desc = '_' + sanitize_filename(course['courseName'], args.desc)
+            else:
+                append_desc = ''
+
+            if args.originaltime:
+                created_time_seconds = round(course['createdDate'] // 1000)
+            else:
+                created_time_seconds = datetime.now().timestamp()
+
+            # Save the file and inform if it already existed. If the file already existed, do not append the record to the csv
+            if export_course_file(str(course['courseId']), course, args, append_desc, created_time_seconds):
+                csv_write_course_record(csv_filter, course, activity_type_name)
+
+        # End for loop for courses / action items
+
+    # Process activities
     else:
-        total_to_download = int(args.count)
 
-    device_dict = dict()
+        # Query the userstats (activities totals on the profile page). Needed for
+        # filtering and for downloading 'all' to know how many activities are available
+        userstats_json = fetch_userstats(args)
 
-    # load some dictionaries with lookup data from REST services
-    activity_type_props = http_req_as_string(URL_GC_ACT_PROPS)
-    if args.verbosity > 0:
-        write_to_file(os.path.join(args.directory, 'activity_types.properties'), activity_type_props, 'w')
-    activity_type_name = load_properties(activity_type_props)
-    event_type_props = http_req_as_string(URL_GC_EVT_PROPS)
-    if args.verbosity > 0:
-        write_to_file(os.path.join(args.directory, 'event_types.properties'), activity_type_props, 'w')
-    event_type_name = load_properties(event_type_props)
+        if args.count == 'all':
+            total_to_download = int(userstats_json['userMetrics'][0]['totalActivities'])
+        else:
+            total_to_download = int(args.count)
 
-    activities = fetch_activity_list(args, total_to_download)
-    action_list = annotate_activity_list(activities, args.start_activity_no, exclude_list)
+        device_dict = dict()
 
-    # Process each activity.
-    for item in action_list:
+        # load some dictionaries with lookup data from REST services
+        activity_type_props = http_req_as_string(URL_GC_ACT_PROPS)
+        if args.verbosity > 0:
+            write_to_file(os.path.join(args.directory, 'activity_types.properties'), activity_type_props, 'w')
+        activity_type_name = load_properties(activity_type_props)
+        event_type_props = http_req_as_string(URL_GC_EVT_PROPS)
+        if args.verbosity > 0:
+            write_to_file(os.path.join(args.directory, 'event_types.properties'), activity_type_props, 'w')
+        event_type_name = load_properties(event_type_props)
 
-        current_index = item['index'] + 1
-        actvty = item['activity']
-        action = item['action']
+        activities = fetch_activity_list(args, total_to_download)
+        action_list = annotate_activity_list(activities, args.start_index_no, exclude_list)
 
-        # Action: skipping
-        if action == 's':
-            # Display which entry we're skipping.
-            print('Skipping   : Garmin Connect activity ', end='')
+        # Process each activity.
+        for item in action_list:
+
+            current_index = item['index'] + 1
+            actvty = item['activity']
+            action = item['action']
+
+            # Action: skipping
+            if action == 's':
+                # Display which entry we're skipping.
+                print('Skipping   : Garmin Connect activity ', end='')
+                print('(', current_index, '/', len(action_list), ') ', sep='', end='')
+                print('[', actvty['activityId'], ']', sep='')
+                continue
+
+            # Action: excluding
+            if action == 'e':
+                # Display which entry we're skipping.
+                print('Excluding  : Garmin Connect activity ', end='')
+                print('(', current_index, '/', len(action_list), ') ', sep='', end='')
+                print('[', actvty['activityId'], '] ', sep='')
+                continue
+
+            # Action: download
+            # Display which entry we're working on.
+            print('Downloading: Garmin Connect activity ', end='')
             print('(', current_index, '/', len(action_list), ') ', sep='', end='')
-            print('[', actvty['activityId'], ']', sep='')
-            continue
+            print('[', actvty['activityId'], '] ', sep='', end='')
+            print(actvty['activityName'])
 
-        # Action: excluding
-        if action == 'e':
-            # Display which entry we're skipping.
-            print('Excluding  : Garmin Connect activity ', end='')
-            print('(', current_index, '/', len(action_list), ') ', sep='', end='')
-            print('[', actvty['activityId'], '] ', sep='')
-            continue
+            # Retrieve also the detail data from the activity (the one displayed on
+            # the https://connect.garmin.com/modern/activity/xxx page), because some
+            # data are missing from 'a' (or are even different, e.g. for my activities
+            # 86497297 or 86516281)
+            activity_details, details = fetch_details(actvty['activityId'], http_req_as_string)
 
-        # Action: download
-        # Display which entry we're working on.
-        print('Downloading: Garmin Connect activity ', end='')
-        print('(', current_index, '/', len(action_list), ') ', sep='', end='')
-        print('[', actvty['activityId'], '] ', sep='', end='')
-        print(actvty['activityName'])
+            extract = {}
+            extract['start_time_with_offset'] = offset_date_time(actvty['startTimeLocal'], actvty['startTimeGMT'])
+            elapsed_duration = details['summaryDTO']['elapsedDuration'] if 'summaryDTO' in details and 'elapsedDuration' in details['summaryDTO'] else None
+            extract['elapsed_duration'] = elapsed_duration if elapsed_duration else actvty['duration']
+            extract['elapsed_seconds'] = int(round(extract['elapsed_duration']))
+            extract['end_time_with_offset'] = extract['start_time_with_offset'] + timedelta(seconds=extract['elapsed_seconds'])
 
-        # Retrieve also the detail data from the activity (the one displayed on
-        # the https://connect.garmin.com/modern/activity/xxx page), because some
-        # data are missing from 'a' (or are even different, e.g. for my activities
-        # 86497297 or 86516281)
-        activity_details, details = fetch_details(actvty['activityId'], http_req_as_string)
+            print('\t', extract['start_time_with_offset'].isoformat(), ', ', sep='', end='')
+            print(hhmmss_from_seconds(extract['elapsed_seconds']), ', ', sep='', end='')
+            if 'distance' in actvty and isinstance(actvty['distance'], (float)):
+                print("{0:.1f}".format(actvty['distance'] / 1000), 'km', sep='')
+            else:
+                print('0.0 km')
 
-        extract = {}
-        extract['start_time_with_offset'] = offset_date_time(actvty['startTimeLocal'], actvty['startTimeGMT'])
-        elapsed_duration = details['summaryDTO']['elapsedDuration'] if 'summaryDTO' in details and 'elapsedDuration' in details['summaryDTO'] else None
-        extract['elapsed_duration'] = elapsed_duration if elapsed_duration else actvty['duration']
-        extract['elapsed_seconds'] = int(round(extract['elapsed_duration']))
-        extract['end_time_with_offset'] = extract['start_time_with_offset'] + timedelta(seconds=extract['elapsed_seconds'])
+            if args.desc is not None:
+                append_desc = '_' + sanitize_filename(actvty['activityName'], args.desc)
+            else:
+                append_desc = ''
 
-        print('\t', extract['start_time_with_offset'].isoformat(), ', ', sep='', end='')
-        print(hhmmss_from_seconds(extract['elapsed_seconds']), ', ', sep='', end='')
-        if 'distance' in actvty and isinstance(actvty['distance'], (float)):
-            print("{0:.3f}".format(actvty['distance'] / 1000), 'km', sep='')
-        else:
-            print('0.000 km')
+            if args.originaltime:
+                start_time_seconds = epoch_seconds_from_summary(actvty)
+            else:
+                start_time_seconds = None
 
-        if args.desc is not None:
-            append_desc = '_' + sanitize_filename(actvty['activityName'], args.desc)
-        else:
-            append_desc = ''
+            extract['device'] = extract_device(device_dict, details, start_time_seconds, args, http_req_as_string, write_to_file)
 
-        if args.originaltime:
-            start_time_seconds = epoch_seconds_from_summary(actvty)
-        else:
-            start_time_seconds = None
+            # try to get the JSON with all the samples (not all activities have it...),
+            # but only if it's really needed for the CSV output
+            extract['samples'] = None
+            if csv_filter.is_column_active('sampleCount'):
+                try:
+                    # TODO implement retries here, I have observed temporary failures
+                    activity_measurements = http_req_as_string(URL_GC_ACTIVITY + str(actvty['activityId']) + "/details")
+                    write_to_file(os.path.join(args.directory, 'activity_' + str(actvty['activityId']) + '_samples.json'),
+                                  activity_measurements, 'w',
+                                  start_time_seconds)
+                    samples = json.loads(activity_measurements)
+                    extract['samples'] = samples
+                except HTTPError:
+                    pass # don't abort just for missing samples...
+                    # logging.info("Unable to get samples for %d", actvty['activityId'])
+                    # logging.exception(e)
 
-        extract['device'] = extract_device(device_dict, details, start_time_seconds, args, http_req_as_string, write_to_file)
+            extract['gear'] = None
+            if csv_filter.is_column_active('gear'):
+                extract['gear'] = load_gear(str(actvty['activityId']), args)
 
-        # try to get the JSON with all the samples (not all activities have it...),
-        # but only if it's really needed for the CSV output
-        extract['samples'] = None
-        if csv_filter.is_column_active('sampleCount'):
-            try:
-                # TODO implement retries here, I have observed temporary failures
-                activity_measurements = http_req_as_string(URL_GC_ACTIVITY + str(actvty['activityId']) + "/details")
-                write_to_file(os.path.join(args.directory, 'activity_' + str(actvty['activityId']) + '_samples.json'),
-                              activity_measurements, 'w',
-                              start_time_seconds)
-                samples = json.loads(activity_measurements)
-                extract['samples'] = samples
-            except HTTPError:
-                pass # don't abort just for missing samples...
-                # logging.info("Unable to get samples for %d", actvty['activityId'])
-                # logging.exception(e)
+            extract['hrZones'] = HR_ZONES_EMPTY
+            if csv_filter.is_column_active('hrZone1Low') or csv_filter.is_column_active('hrZone1Seconds'):
+                extract['hrZones'] = load_zones(str(actvty['activityId']), start_time_seconds, args, http_req_as_string, write_to_file)
 
-        extract['gear'] = None
-        if csv_filter.is_column_active('gear'):
-            extract['gear'] = load_gear(str(actvty['activityId']), args)
-
-        extract['hrZones'] = HR_ZONES_EMPTY
-        if csv_filter.is_column_active('hrZone1Low') or csv_filter.is_column_active('hrZone1Seconds'):
-            extract['hrZones'] = load_zones(str(actvty['activityId']), start_time_seconds, args, http_req_as_string, write_to_file)
-
-        # Save the file and inform if it already existed. If the file already existed, do not apped the record to the csv
-        if export_data_file(str(actvty['activityId']), activity_details, args, start_time_seconds, append_desc, actvty['startTimeLocal']):
-            # Write stats to CSV.
-            csv_write_record(csv_filter, extract, actvty, details, activity_type_name, event_type_name)
-
-
-    # End for loop for activities / action items
+            # Save the file and inform if it already existed. If the file already existed, do not apped the record to the csv
+            if export_data_file(str(actvty['activityId']), activity_details, args, start_time_seconds, append_desc, actvty['startTimeLocal']):
+                # Write stats to CSV.
+                csv_write_record(csv_filter, extract, actvty, details, activity_type_name, event_type_name)
+        # End for loop for activities / action items
 
     csv_file.close()
 
