@@ -116,6 +116,7 @@ URL_GC_OWNER_COURSES = f'{GARMIN_BASE_URL}/web-gateway/course/owner/'
 URL_GC_GPX_COURSE = f'{GARMIN_BASE_URL}/course-service/course/gpx/'
 URL_GC_FIT_COURSE = f'{GARMIN_BASE_URL}/course-service/course/fit/'
 
+
 class GarminException(Exception):
     """Exception for problems with Garmin Connect (connection, data consistency etc)."""
 
@@ -664,7 +665,6 @@ def csv_write_course_record(csv_filter, course, activity_type_name):
     Write out the given course data as a CSV record
     """
 
-    type_id = 4 if absent_or_null('activityType', course) else course['activityType']['typeId']
     parent_type_id = 4 if absent_or_null('activityType', course) else course['activityType']['parentTypeId']
     if present(parent_type_id, PARENT_TYPE_ID):
         parent_type_key = PARENT_TYPE_ID[parent_type_id]
@@ -925,6 +925,7 @@ def export_data_file(activity_id, activity_details, args, file_time, append_desc
     # Inform the main program that the file is new
     return True
 
+
 def export_course_file(course_id, course, args, file_time, append_desc):
     """
     Write the data of the course to a file, depending on the chosen data format
@@ -959,7 +960,6 @@ def export_course_file(course_id, course, args, file_time, append_desc):
     else:
         prefix = ""
 
-    original_basename = None
     if args.format == 'gpx':
         data_filename = os.path.join(directory, prefix + 'course_' + course_id + append_desc + '.gpx')
         download_url = URL_GC_GPX_COURSE + course_id + '?full=true'
@@ -1205,7 +1205,7 @@ def fetch_course_list(args, total_to_download):
     if len(courses) != total_to_download:
         logging.info('Expected %s courses, got %s.', total_to_download, len(courses))
 
-    return courses[ : total_to_download]
+    return courses[: total_to_download]
 
 
 def annotate_course_list(courses, start, exclude_list):
@@ -1243,9 +1243,7 @@ def fetch_course_chunk(args, num_to_download, total_downloaded):
 
     # Persist JSON courses list
     current_index = total_downloaded + 1
-    courses_list_filename = 'courses-' \
-                               + str(current_index) + '-' \
-                               + str(total_downloaded + num_to_download) + '.json'
+    courses_list_filename = 'courses-' + str(current_index) + '-' + str(total_downloaded + num_to_download) + '.json'
     owner_courses = json.loads(result)
     courses = owner_courses['coursesForUser']
     write_to_file(os.path.join(args.directory, courses_list_filename), json.dumps(courses), 'w')
