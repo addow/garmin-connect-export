@@ -449,9 +449,9 @@ def parse_arguments(argv):
     parser.add_argument('-c', '--count', default='1',
         help='number of recent activities or courses to download, or \'all\' (default: 1)')
     parser.add_argument('-sd', '--start_date', default='',
-        help='the start date to get activities or courses from (inclusive). Format example: 2023-07-31')
+                        help='the start date to get activities or courses from (inclusive). Format example: 2023-07-31')
     parser.add_argument('-ed', '--end_date', default='',
-        help='the end date to get activities or courses to (inclusive). Format example: 2023-07-31')
+                        help='the end date to get activities or courses to (inclusive). Format example: 2023-07-31')
     parser.add_argument('-e', '--external',
         help='path to external program to pass CSV file too')
     parser.add_argument('-a', '--args',
@@ -469,7 +469,7 @@ def parse_arguments(argv):
     parser.add_argument('-ot', '--originaltime', action='store_true',
         help='will set downloaded (and possibly unzipped) file time to the activity start time or the course creation time')
     parser.add_argument('--desc', type=int, nargs='?', const=0, default=None,
-        help='append the activity\'s or course\'s description to the file name of the download; limit size if number is given')
+                        help='append the activity\'s or course\'s description to the file name of the download; limit size if number is given')
     parser.add_argument('-t', '--template', default=CSV_TEMPLATE,
         help='template file with desired columns for CSV output')
     parser.add_argument('-fp', '--fileprefix', action='count', default=0,
@@ -676,6 +676,7 @@ def csv_write_course_record(csv_filter, course, activity_type_name):
     start_latitude = None if absent_or_null('startLatitude', course) else course['startLatitude']
     start_longitude = None if absent_or_null('startLongitude', course) else course['startLongitude']
 
+    # fmt: off
     csv_filter.set_column('id', str(course['courseId']))
     csv_filter.set_column('courseName', course['courseName'] if present('courseName', course) else None)
     csv_filter.set_column('description', course['courseDescription'] if present('courseDescription', course) else None)
@@ -694,6 +695,7 @@ def csv_write_course_record(csv_filter, course, activity_type_name):
     csv_filter.set_column('startLongitude', trunc6(start_longitude) if start_longitude else None)
     csv_filter.set_column('privacy', course['privacyRule']['typeKey'] if present('typeKey', course['privacyRule']) else None)
     csv_filter.set_column('url', 'https://connect.garmin.com/modern/course/' + str(course['courseId']))
+    # fmt: on
 
     csv_filter.write_row()
 
@@ -923,8 +925,7 @@ def export_data_file(activity_id, activity_details, args, file_time, append_desc
     # Inform the main program that the file is new
     return True
 
-
-def export_course_file(course_id, course, args, append_desc, file_time):
+def export_course_file(course_id, course, args, file_time, append_desc):
     """
     Write the data of the course to a file, depending on the chosen data format
 
@@ -935,18 +936,17 @@ def export_course_file(course_id, course, args, append_desc, file_time):
     :param course_id:        ID of the course (as string)
     :param course:           details of the course (for format 'json')
     :param args:             command-line arguments
+    :param file_time:        if given the desired time stamp for the activity file (in seconds since 1970-01-01)
     :param append_desc:      suffix to the default filename
-    :param file_time:        if given the desired time stamp for the course file (in seconds since 1970-01-01)
     :return:                 True if the file was written, False if the file existed already
     """
-
     # Datetime in ISO format used for '--fileprefix' and '--subdir' options
-    date_time = datetime.fromtimestamp(file_time).strftime('%Y-%m-%d %H:%M:%S')
+    date_time = datetime.fromtimestamp(file_time).strftime('%Y')
 
     # Time dependent subdirectory for course files, e.g. '{YYYY}'
-    if not args.subdir is None:
+    if args.subdir is not None:
         directory = resolve_path(args.directory, args.subdir, date_time)
-    # export courses to root directory
+    # export activities to root directory
     else:
         directory = args.directory
 
@@ -969,11 +969,11 @@ def export_course_file(course_id, course, args, append_desc, file_time):
         download_url = URL_GC_FIT_COURSE + course_id + '/0?elevation=true'
         file_mode = 'wb'
     else:
-        raise Exception('Unrecognized format. Valid formats: \'gpx\' or \'fit\'.')
+        raise GarminException('Unrecognized format. Valid formats: \'gpx\' or \'fit\'.')
 
     if os.path.isfile(data_filename):
         logging.debug('Course file for %s already exists', course_id)
-        print('\tCourse file already exists; skipping...')
+        print('Course file already exists; skipping...')
         # Inform the main program that the course file already exists
         return False
 
@@ -984,7 +984,7 @@ def export_course_file(course_id, course, args, append_desc, file_time):
         data = http_req(download_url)
     except HTTPError as ex:
         logging.info('Got %s for %s', ex.code, download_url)
-        raise Exception('Download failed. Got an HTTP error ' + str(ex.code) + ' for ' + download_url)
+        raise GarminException('Download failed. Got an HTTP error ' + str(ex.code) + ' for ' + download_url)
 
     # Persist file
     write_to_file(data_filename, data, file_mode, file_time)
@@ -1241,7 +1241,7 @@ def fetch_course_chunk(args, num_to_download, total_downloaded):
     result = http_req_as_string(URL_GC_OWNER_COURSES + '?' + urlencode(search_params))
     print(' Done.')
 
-    # Persist JSON activities list
+    # Persist JSON courses list
     current_index = total_downloaded + 1
     courses_list_filename = 'courses-' \
                                + str(current_index) + '-' \
@@ -1458,6 +1458,64 @@ def process_activity_item(item, number_of_items, device_dict, type_filter, activ
         csv_write_record(csv_filter, extract, actvty, details, activity_type_name, event_type_name)
 
 
+def process_course_item(item, number_of_items, activity_type_name, csv_filter, args):
+    """
+    Process one course item: download the data, parse it and write a line to the CSV file
+
+    :param item:               activity item tuple, see `annotate_activity_list()`
+    :param number_of_items:    total number of items (for progress output)
+    :param activity_type_name: lookup table for activity type descriptions
+    :param csv_filter:         object encapsulating CSV file access
+    :param args:               command-line arguments
+    """
+    current_index = item['index'] + 1
+    course = item['course']
+    action = item['action']
+
+    # Action: skipping
+    if action == 's':
+        # Display which entry we're skipping.
+        print('Skipping   : Garmin Connect course ', end='')
+        print(f"({current_index}/{number_of_items}) [{course['courseId']}]")
+        return
+
+    # Action: excluding
+    if action == 'e':
+        # Display which entry we're skipping.
+        print('Excluding  : Garmin Connect course ', end='')
+        print(f"({current_index}/{number_of_items}) [{course['courseId']}]")
+        return
+
+    # Action: download
+    # Display which entry we're working on.
+    print('Downloading: Garmin Connect course ', end='')
+    course_name = course['courseName'] if present('courseName', course) else ""
+    print(f"({current_index}/{number_of_items}) [{course['courseId']}] {course_name}: ", end='')
+
+    if 'distanceInMeters' in course and isinstance(course['distanceInMeters'], float):
+        print(f"{course['distanceInMeters'] / 1000:.1f} km", end='')
+    else:
+        print('0.0 km', end='')
+
+    print(' | ', end='')
+
+    if args.desc is not None:
+        append_desc = '_' + sanitize_filename(course_name, args.desc)
+    else:
+        append_desc = ''
+
+    if args.originaltime:
+        created_time_seconds = round(course['createdDate'] / 1000)
+    else:
+        created_time_seconds = datetime.now().timestamp()
+
+    # Save the file and inform if it already existed. If the file already existed, do not append the record to the csv
+    if export_course_file(str(course['courseId']), course, args, created_time_seconds, append_desc):
+        # Write stats to CSV.
+        csv_write_course_record(csv_filter, course, activity_type_name)
+        print('Done.')
+
+
 def main(argv):
     """
     Main entry point for gcexport.py
@@ -1500,7 +1558,14 @@ def main(argv):
     userstats_json = fetch_userstats(args)
 
     if args.count == 'all':
-        total_to_download = int(userstats_json['userMetrics'][0]['totalActivities'])
+        if args.what == 'courses':
+            # Query the owner's courses (count courses). Needed for filtering
+            # and for downloading 'all' to know how many courses are available
+            total_to_download = int(len(fetch_owner_courses(args)['coursesForUser']))
+            if args.verbosity > 0:
+                print('Total number of owner\'s courses:', total_to_download)
+        else:
+            total_to_download = int(userstats_json['userMetrics'][0]['totalActivities'])
     else:
         total_to_download = int(args.count)
 
@@ -1514,14 +1579,20 @@ def main(argv):
         write_to_file(os.path.join(args.directory, 'event_types.properties'), event_type_props, 'w')
     event_type_name = load_properties(event_type_props)
 
-    activities = fetch_activity_list(args, total_to_download)
-
     type_filter = args.type_filter.split(',') if args.type_filter is not None else None
 
-    action_list = annotate_activity_list(activities, args.start_activity_no, exclude_list, type_filter)
+    if args.what == 'courses':
+        courses = fetch_course_list(args, total_to_download)
+        action_list = annotate_course_list(courses, args.start_index_no, exclude_list)
+    else:
+        activities = fetch_activity_list(args, total_to_download)
+        action_list = annotate_activity_list(activities, args.start_index_no, exclude_list, type_filter)
 
-    csv_filename = os.path.join(args.directory, 'activities.csv')
+    csv_filename = os.path.join(args.directory, args.what + '.csv')
     csv_existed = os.path.isfile(csv_filename)
+
+    if args.what == 'courses' and args.template == CSV_TEMPLATE:
+        args.template = args.template.replace("default", "courses")
 
     device_dict = {}
     with open(csv_filename, mode='a', encoding='utf-8') as csv_file:
@@ -1533,18 +1604,31 @@ def main(argv):
 
         # Process each activity.
         for item in action_list:
-            try:
-                process_activity_item(
-                    item, len(action_list), device_dict, type_filter, activity_type_name, event_type_name, csv_filter, args
-                )
-            except Exception as ex_item:
-                activity_id = (
-                    item['activity']['activityId']
-                    if present('activity', item) and present('activityId', item['activity'])
-                    else "(unknown id)"
-                )
-                logging.error("Error during processing of activity '%s': %s/%s", activity_id, type(ex_item), ex_item)
-                raise
+            if args.what == 'courses':
+                try:
+                    process_course_item(item, len(action_list), activity_type_name, csv_filter, args)
+                except Exception as ex_item:
+                    course_id = (
+                        item['course']['courseId']
+                        if present('course', item) and present('courseId', item['course'])
+                        else "(unknown id)"
+                    )
+                    logging.error("Error during processing of course '%s': %s/%s", course_id, type(ex_item), ex_item)
+                    raise
+            else:
+                try:
+                    process_activity_item(
+                        item, len(action_list), device_dict, type_filter, activity_type_name, event_type_name, csv_filter,
+                        args
+                    )
+                except Exception as ex_item:
+                    activity_id = (
+                        item['activity']['activityId']
+                        if present('activity', item) and present('activityId', item['activity'])
+                        else "(unknown id)"
+                    )
+                    logging.error("Error during processing of activity '%s': %s/%s", activity_id, type(ex_item), ex_item)
+                    raise
 
     logging.info('CSV file written.')
 
