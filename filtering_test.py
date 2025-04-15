@@ -1,17 +1,19 @@
-import unittest
-import filtering
+# Standard library imports
+import json
 import tempfile
+import unittest
 from os import path
 from os import remove
+
+# Local application/library specific imports
+import filtering
 from filtering import DOWNLOADED_IDS_FILE_NAME
 from filtering import KEY_IDS
-import json
 
 DIR = tempfile.gettempdir()
 
 
 class TestExcludeFile(unittest.TestCase):
-
     @property
     def file_under_test(self):
         return path.join(DIR, "exclude.json")
@@ -48,7 +50,6 @@ class TestExcludeFile(unittest.TestCase):
 
 
 class TestDownloadStats(unittest.TestCase):
-
     @property
     def file_under_test(self):
         return path.join(DIR, DOWNLOADED_IDS_FILE_NAME)
@@ -70,7 +71,6 @@ class TestDownloadStats(unittest.TestCase):
             self.assertEqual(actual[KEY_IDS][0], '1000')
 
     def test_1000_items(self):
-
         r = range(1, 1000)
 
         for i in r:
