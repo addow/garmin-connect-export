@@ -680,7 +680,7 @@ def csv_write_course_record(csv_filter, course, activity_type_name):
     csv_filter.set_column('id', str(course['courseId']))
     csv_filter.set_column('courseName', course['courseName'] if present('courseName', course) else None)
     csv_filter.set_column('description', course['courseDescription'] if present('courseDescription', course) else None)
-    csv_filter.set_column('distanceRaw', "{0:.5f}".format(course['distanceInMeters'] / 1000) if present('distanceInMeters', course) else None)
+    csv_filter.set_column('distanceRaw', f"{course['distanceInMeters'] / 1000:.1f}" if present('distanceInMeters', course) else None)
     csv_filter.set_column('elevationGain', str(round(course['elevationGainInMeters'])) if present('elevationGainInMeters', course) else None)
     csv_filter.set_column('elevationLoss', str(round(course['elevationLossInMeters'])) if present('elevationLossInMeters', course) else None)
     csv_filter.set_column('averageSpeedRaw', kmh_from_mps(course['speedInMetersPerSecond']) if present('speedInMetersPerSecond', course) else None)
@@ -926,7 +926,7 @@ def export_data_file(activity_id, activity_details, args, file_time, append_desc
     return True
 
 
-def export_course_file(course_id, course, args, file_time, append_desc):
+def export_course_file(course_id, args, file_time, append_desc):
     """
     Write the data of the course to a file, depending on the chosen data format
 
@@ -935,7 +935,6 @@ def export_course_file(course_id, course, args, file_time, append_desc):
     to write the file into can be modified by the '--subdir' option.
 
     :param course_id:        ID of the course (as string)
-    :param course:           details of the course (for format 'json')
     :param args:             command-line arguments
     :param file_time:        if given the desired time stamp for the activity file (in seconds since 1970-01-01)
     :param append_desc:      suffix to the default filename
@@ -947,7 +946,6 @@ def export_course_file(course_id, course, args, file_time, append_desc):
     # Time dependent subdirectory for course files, e.g. '{YYYY}'
     if args.subdir is not None:
         directory = resolve_path(args.directory, args.subdir, date_time)
-    # export activities to root directory
     else:
         directory = args.directory
 
@@ -956,7 +954,7 @@ def export_course_file(course_id, course, args, file_time, append_desc):
 
     # timestamp as prefix for filename
     if args.fileprefix > 0:
-        prefix = "{}-".format(date_time.replace("-", "").replace(":", "").replace(" ", "-"))
+        prefix = f'{date_time.replace("-", "").replace(":", "").replace(" ", "-")}-'
     else:
         prefix = ""
 
@@ -984,7 +982,7 @@ def export_course_file(course_id, course, args, file_time, append_desc):
         data = http_req(download_url)
     except HTTPError as ex:
         logging.info('Got %s for %s', ex.code, download_url)
-        raise GarminException('Download failed. Got an HTTP error ' + str(ex.code) + ' for ' + download_url)
+        raise GarminException(f'Failed. Got an HTTP error {ex.code} for {download_url}') from ex
 
     # Persist file
     write_to_file(data_filename, data, file_mode, file_time)
@@ -1209,16 +1207,32 @@ def fetch_course_list(args, total_to_download):
 
 
 def annotate_course_list(courses, start, exclude_list):
+    """
+    Creates an action list with a tuple per course summary
+
+    The tuple per course contains three values:
+    - index:    the index of the course in the courses argument
+                (the first gets index 0, the second index 1 etc)
+    - course    the course from the courses argument
+    - action    the action to take for this course (d=download, s=skip, e=exclude)
+
+    :param courses:       List of courses
+    :param start:         One-based index of the first non-skipped course
+                          (i.e. with 1 no course gets skipped, with 2 the first course gets skipped etc)
+    :param exclude_list:  List of course ids that have to be skipped explicitly
+    :return:              List of action tuples
+    """
+
     action_list = []
-    for index, c in enumerate(courses):
+    for index, course in enumerate(courses):
         if index < (start - 1):
             action = 's'
-        elif str(c['courseId']) in exclude_list:
+        elif str(course['courseId']) in exclude_list:
             action = 'e'
         else:
             action = 'd'
 
-        action_list.append(dict(index=index, action=action, course=c))
+        action_list.append({"index": index, "action": action, "course": course})
 
     return action_list
 
@@ -1508,7 +1522,7 @@ def process_course_item(item, number_of_items, activity_type_name, csv_filter, a
         created_time_seconds = datetime.now().timestamp()
 
     # Save the file and inform if it already existed. If the file already existed, do not append the record to the csv
-    if export_course_file(str(course['courseId']), course, args, created_time_seconds, append_desc):
+    if export_course_file(str(course['courseId']), args, created_time_seconds, append_desc):
         # Write stats to CSV.
         csv_write_course_record(csv_filter, course, activity_type_name)
         print('Done.')
